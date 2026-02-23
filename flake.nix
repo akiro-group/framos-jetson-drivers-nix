@@ -108,6 +108,16 @@
                 KERNEL_HEADERS="$KERNEL_HEADERS" \
                 KERNEL_OUTPUT="$KERNEL_HEADERS"
 
+              # Keep only framos-specific modules to avoid conflicting with
+              # nvidia-oot-modules (nvgpu, nvdisplay, nvethernetrm, etc.).
+              # tegra-camera.ko is kept because framos modifies it; all other
+              # non-fr_ modules are supplied by nvidia-oot-modules instead.
+              find $out/lib/modules -name "*.ko.xz" \
+                ! -name "fr_*.ko.xz" \
+                ! -name "tegra-camera.ko.xz" \
+                -delete
+              find $out/lib/modules -mindepth 1 -type d -empty -delete
+
               install -d $out/bin
               install -m 0755 tools/jetson-config-camera-cli.py $out/bin/
               install -m 0755 tools/jetson-config-camera.py     $out/bin/
@@ -189,10 +199,17 @@
               }
             ]) cfg.sensors;
 
-            # Replace nvidia-oot-modules entirely: the framos source tree is a
-            # superset of nvidia-oot (same modules + fr_* drivers + modified
-            # tegra-camera).  Adding both would cause a buildEnv path conflict.
-            boot.extraModulePackages = lib.mkForce [ framosDrivers ];
+            # framosDrivers ships a modified tegra-camera.ko; strip it from
+            # nvidia-oot-modules so buildEnv doesn't see a path conflict.
+            boot.kernelPackages = lib.mkForce (config.boot.kernelPackages.extend (final: prev: {
+              nvidia-oot-modules = prev.nvidia-oot-modules.overrideAttrs (old: {
+                postInstall = (old.postInstall or "") + ''
+                  find $out/lib/modules -name "tegra-camera.ko.xz" -delete
+                '';
+              });
+            }));
+
+            boot.extraModulePackages = [ framosDrivers ];
 
             hardware.nvidia-jetpack.flashScript.additionalDtbOverlays =
               map (o: "${framosDrivers}/boot/framos/dtbo/${o}") allOverlays;
