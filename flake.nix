@@ -72,7 +72,7 @@
 
             src = framosSrc;
 
-            patches = [ "${self}/patches/0001-hwpm-define-NV_LINUX_IOSYS_MAP_H_PRESENT.patch" ];
+            patches = [ "${self}/patches/0001-hwpm-use-iosys-map-unconditionally.patch" ];
 
             nativeBuildInputs = with pkgs; [ flex bison openssl dtc ]
               ++ config.boot.kernelPackages.kernel.moduleBuildDependencies;

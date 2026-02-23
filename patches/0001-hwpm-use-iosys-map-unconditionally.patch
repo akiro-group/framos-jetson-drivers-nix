@@ -1,50 +1,38 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-Subject: [PATCH] hwpm: define NV_LINUX_IOSYS_MAP_H_PRESENT for nixpkgs kernel
+Subject: [PATCH] hwpm: unconditionally use iosys_map for nixpkgs kernel
 
-NV_LINUX_IOSYS_MAP_H_PRESENT is used as a guard throughout the hwpm and
-nvidia-oot drivers to select between struct iosys_map (renamed from
-dma_buf_map) and the old struct dma_buf_map fallback. The macro is never
-emitted by the conftest build system — it is an orphaned guard.
+The nixpkgs kernel (5.15) carries the iosys-map rename and the two-arg
+dma_buf_vmap/vunmap API. Remove all version-code and
+NV_LINUX_IOSYS_MAP_H_PRESENT guards from mem_mgmt_utils.h and
+mem_mgmt_utils.c, keeping only the iosys_map code paths.
 
-The kernel packaged in nixpkgs carries the iosys-map rename, so define
-the macro unconditionally in the hwpm Makefile and remove the now-dead
-dma-buf-map.h fallback branches from mem_mgmt_utils.h and align the
-version-code guards in mem_mgmt_utils.c to use the same macro.
-
-diff --git a/source/hwpm/drivers/tegra/hwpm/Makefile b/source/hwpm/drivers/tegra/hwpm/Makefile
---- a/source/hwpm/drivers/tegra/hwpm/Makefile
-+++ b/source/hwpm/drivers/tegra/hwpm/Makefile
-@@ -20,6 +20,7 @@
- # For OOT builds, set required config flags
- ifeq ($(CONFIG_TEGRA_OOT_MODULE),m)
- CONFIG_TEGRA_HWPM_OOT := y
-+ccflags-y += -DNV_LINUX_IOSYS_MAP_H_PRESENT
- ccflags-y += -DCONFIG_TEGRA_HWPM_OOT
-
- CONFIG_TEGRA_FUSE_UPSTREAM := y
 diff --git a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h
 --- a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h
 +++ b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h
-@@ -23,11 +23,7 @@
+@@ -21,13 +21,7 @@
+
+ #include <linux/types.h>
  #include <linux/version.h>
- #if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
+-#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
  #include <linux/iosys-map.h>
 -#else
 -#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 -#include <linux/dma-buf-map.h>
- #endif
+-#endif
 -#endif
 
  /* This macro is copy of TEGRA_SOC_HWPM_MEM_BYTES_INVALID */
  #define TEGRA_HWPM_MEM_BYTES_INVALID	0xffffffff
-@@ -53,11 +49,7 @@
+@@ -51,13 +45,7 @@
+ 	struct dma_buf *mem_bytes_dma_buf;
+ 	struct dma_buf_attachment *mem_bytes_attach;
  	void *mem_bytes_kernel;
- #if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
+-#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
  	struct iosys_map mem_bytes_map;
 -#else
 -#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 -	struct dma_buf_map mem_bytes_map;
- #endif
+-#endif
 -#endif
  };
 
@@ -52,30 +40,56 @@ diff --git a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h b/source/h
 diff --git a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c
 --- a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c
 +++ b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c
-@@ -93,7 +93,7 @@
+@@ -93,9 +93,7 @@
  	struct tegra_soc_hwpm_alloc_pma_stream *alloc_pma_stream)
  {
  	struct tegra_hwpm_os_linux *hwpm_linux = NULL;
 -#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-+#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
  	int err = 0;
- #endif
+-#endif
 
-@@ -130,7 +130,7 @@
+ 	tegra_hwpm_fn(hwpm, " ");
+
+@@ -130,13 +128,6 @@
  	hwpm->mem_mgmt->mem_bytes_buf_va =
  		sg_dma_address(hwpm->mem_mgmt->mem_bytes_sgt->sgl);
 
 -#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-+#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
- 	/*
- 	 * Kernel version 5.11 and above introduces dma_buf_map structure
- 	 * (called iosys_map in versions later than 5.18).
-@@ -188,7 +188,7 @@
+-	/*
+-	 * Kernel version 5.11 and above introduces dma_buf_map structure
+-	 * (called iosys_map in versions later than 5.18).
+-	 * The kernel virtual address generated from dma_buf_vmap API
+-	 * is stored in mem_bytes_map, which is a dma_buf_map structure
+-	 */
+ 	err = dma_buf_vmap(hwpm->mem_mgmt->mem_bytes_dma_buf,
+ 		&hwpm->mem_mgmt->mem_bytes_map);
+ 	if (err != 0) {
+@@ -146,15 +137,6 @@
+ 	}
+
+ 	hwpm->mem_mgmt->mem_bytes_kernel = hwpm->mem_mgmt->mem_bytes_map.vaddr;
+-#else
+-	hwpm->mem_mgmt->mem_bytes_kernel =
+-		dma_buf_vmap(hwpm->mem_mgmt->mem_bytes_dma_buf);
+-	if (!hwpm->mem_mgmt->mem_bytes_kernel) {
+-		tegra_hwpm_err(hwpm,
+-			"Unable to map mem_bytes buffer into kernel VA space");
+-		return -ENOMEM;
+-	}
+-#endif
+
+ 	memset(hwpm->mem_mgmt->mem_bytes_kernel, 0, 32);
+
+@@ -188,13 +170,8 @@
  	hwpm->mem_mgmt->stream_dma_buf = NULL;
 
  	if (hwpm->mem_mgmt->mem_bytes_kernel) {
 -#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
-+#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
  		dma_buf_vunmap(hwpm->mem_mgmt->mem_bytes_dma_buf,
  			       &hwpm->mem_mgmt->mem_bytes_map);
- #else
+-#else
+-		dma_buf_vunmap(hwpm->mem_mgmt->mem_bytes_dma_buf,
+-			       hwpm->mem_mgmt->mem_bytes_kernel);
+-#endif
+ 		hwpm->mem_mgmt->mem_bytes_kernel = NULL;
+ 	}
