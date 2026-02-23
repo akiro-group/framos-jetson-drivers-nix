@@ -189,7 +189,10 @@
               }
             ]) cfg.sensors;
 
-            boot.extraModulePackages = [ framosDrivers ];
+            # Replace nvidia-oot-modules entirely: the framos source tree is a
+            # superset of nvidia-oot (same modules + fr_* drivers + modified
+            # tegra-camera).  Adding both would cause a buildEnv path conflict.
+            boot.extraModulePackages = lib.mkForce [ framosDrivers ];
 
             system.activationScripts.framosJetsonDtbo = {
               text = ''
