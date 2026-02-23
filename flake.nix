@@ -72,22 +72,23 @@
 
             src = framosSrc;
 
-            nativeBuildInputs = with pkgs; [ flex bison openssl dtc ];
+            nativeBuildInputs = with pkgs; [ flex bison openssl dtc ]
+              ++ config.boot.kernelPackages.kernel.moduleBuildDependencies;
 
-            KERNEL_HEADERS = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/build";
-            KERNEL_OUTPUT  = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/build";
+            KERNEL_SOURCE = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/source";
+            KERNEL_BUILD  = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/build";
 
             buildPhase = ''
               make -C source dtbs \
                 TEGRA_TOP=$PWD/source \
-                srctree="$KERNEL_HEADERS" \
-                objtree="$KERNEL_OUTPUT" \
+                srctree="$KERNEL_SOURCE" \
+                objtree="$KERNEL_BUILD" \
                 oottree=$PWD/source/kernel-devicetree \
                 HOSTCC=gcc
 
               make -C source modules \
-                KERNEL_HEADERS="$KERNEL_HEADERS" \
-                KERNEL_OUTPUT="$KERNEL_OUTPUT" \
+                KERNEL_HEADERS="$KERNEL_BUILD" \
+                KERNEL_OUTPUT="$KERNEL_BUILD" \
                 NPROC=$(nproc)
             '';
 
