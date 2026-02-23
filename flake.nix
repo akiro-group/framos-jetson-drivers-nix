@@ -72,10 +72,7 @@
 
             src = framosSrc;
 
-            patches = [
-              "${self}/patches/0001-hwpm-use-iosys-map-unconditionally.patch"
-              "${self}/patches/0002-nvidia-oot-asoc-use-asoc-simple-api-unconditionally.patch"
-            ];
+            patches = [ "${self}/patches/0001-conftest-hardcode-linux-5.15-results.patch" ];
 
             nativeBuildInputs = with pkgs; [ flex bison openssl dtc ]
               ++ config.boot.kernelPackages.kernel.moduleBuildDependencies;

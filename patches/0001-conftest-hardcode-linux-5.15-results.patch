@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] conftest: hardcode correct results for linux-5.15 on NixOS
+
+The NixOS kernel package uses a split source/build tree.  IS_ENABLED()
+guards in arch headers (cpufeature.h, seqlock.h, etc.) emit hard compile
+errors when configs like CONFIG_PREEMPT_RT are absent from autoconf.h.
+This causes both compile-based function tests and the -E -M header
+presence test for linux/iosys-map.h to fail for the wrong reason, giving
+the opposite of the correct answer.
+
+Hard-code the results for the seven symbols that are provably wrong for
+linux-5.15:
+
+  NV_LINUX_IOSYS_MAP_H_PRESENT          - present (linux/iosys-map.h
+                                           exists since 5.15)
+  NV_ASOC_SIMPLE_RENAMED_SIMPLE         - absent  (simple_util_* added
+                                           in v6.7)
+  NV_DISK_CHECK_MEDIA_CHANGE_PRESENT    - absent  (added in v6.5)
+  NV_BLK_MQ_ALLOC_DISK_FOR_QUEUE_PRESENT - absent (added in v6.0)
+  NV_BLK_MQ_DESTROY_QUEUE_PRESENT      - absent  (added in v6.0)
+  NV_BLK_MQ_ALLOC_QUEUE_PRESENT        - absent  (added after v6.6)
+  NV_CONFTEST_REMOVE_STRUCT_CRYPTO_ENGINE_CTX - absent (struct removed
+                                           in v6.6, still present in 5.15)
+
+diff --git a/source/nvidia-oot/scripts/conftest/conftest.sh b/source/nvidia-oot/scripts/conftest/conftest.sh
+--- a/source/nvidia-oot/scripts/conftest/conftest.sh
++++ b/source/nvidia-oot/scripts/conftest/conftest.sh
+@@ -67,6 +67,17 @@ test_header_presence() {
+
+     file="$1"
+     file_define=NV_`echo $file | tr '/.\-a-z' '___A-Z'`_PRESENT
++
++    # The NixOS kernel's split source/build tree causes IS_ENABLED() guards in
++    # arch headers to emit hard errors when probed with -E -M, so some headers
++    # that are present are falsely reported as absent.  Hard-code the result for
++    # linux/iosys-map.h which is present in linux-5.15 and later.
++    case "$file" in
++        linux/iosys-map.h)
++            echo "#define $file_define"
++            return
++        ;;
++    esac
+
+     CODE="#include <$file>"
+
+@@ -6534,7 +6545,8 @@ compile_check_conftest() {
+                 blk_mq_alloc_disk_for_queue();
+             }"
+
+-            compile_check_conftest "$CODE" "NV_BLK_MQ_ALLOC_DISK_FOR_QUEUE_PRESENT" "" "functions"
++            # linux-5.15 does not have blk_mq_alloc_disk_for_queue (added in v6.0)
++            echo "#undef NV_BLK_MQ_ALLOC_DISK_FOR_QUEUE_PRESENT" | append_conftest "functions"
+         ;;
+
+         blk_mq_alloc_queue)
+@@ -6552,7 +6564,8 @@ compile_check_conftest() {
+                 blk_mq_alloc_queue();
+             }"
+
+-            compile_check_conftest "$CODE" "NV_BLK_MQ_ALLOC_QUEUE_PRESENT" "" "functions"
++            # linux-5.15 does not have blk_mq_alloc_queue (added in next-20240308)
++            echo "#undef NV_BLK_MQ_ALLOC_QUEUE_PRESENT" | append_conftest "functions"
+         ;;
+
+         blk_mq_destroy_queue)
+@@ -6568,7 +6581,8 @@ compile_check_conftest() {
+                 blk_mq_destroy_queue();
+             }"
+
+-            compile_check_conftest "$CODE" "NV_BLK_MQ_DESTROY_QUEUE_PRESENT" "" "functions"
++            # linux-5.15 does not have blk_mq_destroy_queue (added in v6.0)
++            echo "#undef NV_BLK_MQ_DESTROY_QUEUE_PRESENT" | append_conftest "functions"
+         ;;
+
+         blk_queue_max_hw_sectors)
+@@ -6850,7 +6864,8 @@ compile_check_conftest() {
+                 disk_check_media_change();
+             }"
+
+-            compile_check_conftest "$CODE" "NV_DISK_CHECK_MEDIA_CHANGE_PRESENT" "" "functions"
++            # linux-5.15 does not have disk_check_media_change (added in v6.5)
++            echo "#undef NV_DISK_CHECK_MEDIA_CHANGE_PRESENT" | append_conftest "functions"
+         ;;
+
+         dma_slave_config_struct_has_slave_id)
+@@ -7772,7 +7787,8 @@ compile_check_conftest() {
+                 simple_util_dai_init();
+             }"
+
+-            compile_check_conftest "$CODE" "NV_ASOC_SIMPLE_RENAMED_SIMPLE" "" "functions"
++            # linux-5.15 does not have simple_util_dai_init (added in v6.7)
++            echo "#undef NV_ASOC_SIMPLE_RENAMED_SIMPLE" | append_conftest "functions"
+         ;;
+
+         spi_get_chipselect)
+@@ -8140,7 +8156,8 @@ compile_check_conftest() {
+                     ptr = &enginectx;
+             }"
+
+-            compile_check_conftest "$CODE" "NV_CONFTEST_REMOVE_STRUCT_CRYPTO_ENGINE_CTX" "" "functions"
++            # linux-5.15 still has struct crypto_engine_ctx (removed in v6.6)
++            echo "#undef NV_CONFTEST_REMOVE_STRUCT_CRYPTO_ENGINE_CTX" | append_conftest "functions"
+         ;;
+
+         # When adding a new conftest entry, please use the correct format for
