@@ -1,0 +1,117 @@
+{
+  "nodes": {
+    "framos-src-r36_3": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1751876509,
+        "narHash": "sha256-8XU5UhJvlJQ3ZpOZ7xUPYzuU68VCzi4fDXMOy6QAQgQ=",
+        "owner": "framosimaging",
+        "repo": "framos-jetson-drivers",
+        "rev": "2ec1d9a8811852370a43611279bb69eb95da2a86",
+        "type": "github"
+      },
+      "original": {
+        "owner": "framosimaging",
+        "ref": "l4t-r36.3",
+        "repo": "framos-jetson-drivers",
+        "type": "github"
+      }
+    },
+    "framos-src-r36_4": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1751877121,
+        "narHash": "sha256-FRbDvZyDi35fwbgHuey14j9cQ/zxoKdUHfNXyXE/hhQ=",
+        "owner": "framosimaging",
+        "repo": "framos-jetson-drivers",
+        "rev": "f8e7bc0743de2beb8543fcbeca42308666911c03",
+        "type": "github"
+      },
+      "original": {
+        "owner": "framosimaging",
+        "ref": "l4t-r36.4",
+        "repo": "framos-jetson-drivers",
+        "type": "github"
+      }
+    },
+    "framos-src-r36_4_3": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1753780018,
+        "narHash": "sha256-aDudbc5kWJjqWYnCQNsKQf3BgIaXviLicJL9gUXEM0I=",
+        "owner": "framosimaging",
+        "repo": "framos-jetson-drivers",
+        "rev": "d6a3007586a5a851bcce535e84ebb6b80a12a682",
+        "type": "github"
+      },
+      "original": {
+        "owner": "framosimaging",
+        "ref": "l4t-r36.4.3",
+        "repo": "framos-jetson-drivers",
+        "type": "github"
+      }
+    },
+    "framos-src-r36_4_4": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1766131186,
+        "narHash": "sha256-OOJ7jJd3eiQS3tg3+nsXDFuxiTHVLzi253u9Sqnly2U=",
+        "owner": "framosimaging",
+        "repo": "framos-jetson-drivers",
+        "rev": "4e772feec7f21e5ca3d485142c7df03a95c75f3c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "framosimaging",
+        "ref": "l4t-r36.4.4",
+        "repo": "framos-jetson-drivers",
+        "type": "github"
+      }
+    },
+    "framos-src-r38_4": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1770817077,
+        "narHash": "sha256-CyDTF3XoFmFMWse/tjCx5f98NiWjRj5+Fbm5KSoARi8=",
+        "owner": "framosimaging",
+        "repo": "framos-jetson-drivers",
+        "rev": "75e43a1fd6ad166ef8276c59dc31ac6948051c36",
+        "type": "github"
+      },
+      "original": {
+        "owner": "framosimaging",
+        "ref": "l4t-r38.4",
+        "repo": "framos-jetson-drivers",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1771369470,
+        "narHash": "sha256-0NBlEBKkN3lufyvFegY4TYv5mCNHbi5OmBDrzihbBMQ=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "0182a361324364ae3f436a63005877674cf45efb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "framos-src-r36_3": "framos-src-r36_3",
+        "framos-src-r36_4": "framos-src-r36_4",
+        "framos-src-r36_4_3": "framos-src-r36_4_3",
+        "framos-src-r36_4_4": "framos-src-r36_4_4",
+        "framos-src-r38_4": "framos-src-r38_4",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
