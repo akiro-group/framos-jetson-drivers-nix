@@ -72,6 +72,15 @@
 
             src = framosSrc;
 
+            # linux/dma-buf-map.h was renamed to linux/iosys-map.h upstream.
+            # The Jetson 5.15 kernel in nixpkgs carries this rename, so patch the
+            # HWPM driver which still uses the old name.
+            postPatch = ''
+              substituteInPlace \
+                source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h \
+                --replace "linux/dma-buf-map.h" "linux/iosys-map.h"
+            '';
+
             nativeBuildInputs = with pkgs; [ flex bison openssl dtc ]
               ++ config.boot.kernelPackages.kernel.moduleBuildDependencies;
 
