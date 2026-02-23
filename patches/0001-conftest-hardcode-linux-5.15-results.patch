@@ -1,35 +1,42 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-Subject: [PATCH] conftest: hardcode correct results for linux-5.15 on NixOS
+Subject: [PATCH] Fix conftest and include paths for NixOS split kernel tree
 
-The NixOS kernel package uses a split source/build tree.  IS_ENABLED()
-guards in arch headers (cpufeature.h, seqlock.h, etc.) emit hard compile
-errors when configs like CONFIG_PREEMPT_RT are absent from autoconf.h.
-This causes compile-based conftest probes to fail for the wrong reason,
-producing inverted results.  The -E -M header presence test is similarly
-broken for headers whose transitive includes pull in such guards.
+The NixOS kernel package uses a split source/build tree.  Three distinct
+problems arise:
 
-Additionally, the tegra-virt-alt Makefile uses $(overlay)/$(src) to
-construct include paths.  $(overlay) is undefined on all builds, and on
-NixOS $(src) := $(obj) is a path relative to $(KERNEL_OUTPUT) rather
-than an absolute path into the module source tree, so the include
-directory is not found.  Replace both with $(srctree.nvidia-oot) which
-is always set correctly by the top-level source/Makefile.
+1. source/Makefile passes NV_KERNEL_SOURCES=$(KERNEL_HEADERS) (the build
+   tree) to conftest.sh.  conftest.sh derives SOURCE_ARCH_HEADERS from
+   $SOURCES/arch/$ARCH/include, but the NixOS build tree has no arch
+   headers there — they live only in the source tree.  Every probe that
+   transitively includes an arch header (cpufeature.h, seqlock.h, …)
+   fails to compile, causing inverted results: "functions" probes emit
+   #define (absent) instead of #undef (present), and vice-versa for
+   "types" probes.  Fix: pass NV_KERNEL_SOURCES=$(KERNEL_SOURCE).
 
-Hard-code the results for the eight symbols that are provably wrong for
-linux-5.15:
+2. The -E -M header presence test for linux/iosys-map.h fails for the
+   same reason.  Hard-code the correct result since the header is
+   present in linux-5.15 and the probe cannot be made reliable without
+   a deeper change to test_header_presence.
 
-  NV_LINUX_IOSYS_MAP_H_PRESENT              - present (linux/iosys-map.h
-                                               exists since 5.15)
-  NV___ALLOC_DISK_NODE_HAS_LKCLASS_ARG      - present (3-arg form added
-                                               in v5.15)
-  NV_ASOC_SIMPLE_RENAMED_SIMPLE             - absent  (simple_util_* added
-                                               in v6.7)
-  NV_DISK_CHECK_MEDIA_CHANGE_PRESENT        - absent  (added in v6.5)
-  NV_BLK_MQ_ALLOC_DISK_FOR_QUEUE_PRESENT   - absent  (added in v6.0)
-  NV_BLK_MQ_DESTROY_QUEUE_PRESENT          - absent  (added in v6.0)
-  NV_BLK_MQ_ALLOC_QUEUE_PRESENT            - absent  (added after v6.6)
-  NV_CONFTEST_REMOVE_STRUCT_CRYPTO_ENGINE_CTX - absent (struct removed
-                                               in v6.6, still present in 5.15)
+3. The tegra-virt-alt Makefile uses $(overlay)/$(src) to build include
+   paths.  $(overlay) is undefined everywhere, and on NixOS $(src) :=
+   $(obj) is a path relative to $(KERNEL_OUTPUT) rather than an
+   absolute path into the module source tree, so the directory is not
+   found.  Replace both occurrences with $(srctree.nvidia-oot), which
+   is always set correctly by source/Makefile.
+
+diff --git a/source/Makefile b/source/Makefile
+--- a/source/Makefile
++++ b/source/Makefile
+@@ -42,7 +42,7 @@
+ 	$(MAKE) -j $(NPROC) ARCH=arm64 \
+ 		src=$(NVIDIA_CONFTEST)/nvidia obj=$(NVIDIA_CONFTEST)/nvidia \
+ 		CC=$(CROSS_COMPILE)gcc LD=$(CROSS_COMPILE)ld \
+-		NV_KERNEL_SOURCES=$(KERNEL_HEADERS) \
++		NV_KERNEL_SOURCES=$(KERNEL_SOURCE) \
+ 		NV_KERNEL_OUTPUT=$(KERNEL_OUTPUT) \
+ 		-f $(NVIDIA_CONFTEST)/nvidia/Makefile
+ endif
 
 diff --git a/source/nvidia-oot/scripts/conftest/conftest.sh b/source/nvidia-oot/scripts/conftest/conftest.sh
 --- a/source/nvidia-oot/scripts/conftest/conftest.sh
@@ -39,9 +46,9 @@ diff --git a/source/nvidia-oot/scripts/conftest/conftest.sh b/source/nvidia-oot/
      file="$1"
      file_define=NV_`echo $file | tr '/.\-a-z' '___A-Z'`_PRESENT
 +
-+    # The NixOS kernel's split source/build tree causes IS_ENABLED() guards in
-+    # arch headers to emit hard errors when probed with -E -M, so some headers
-+    # that are present are falsely reported as absent.  Hard-code the result for
++    # The NixOS kernel's split source/build tree causes the -E -M header
++    # presence probe to fail for headers whose transitive includes pull in
++    # arch headers not present in the build tree.  Hard-code the result for
 +    # linux/iosys-map.h which is present in linux-5.15 and later.
 +    case "$file" in
 +        linux/iosys-map.h)
@@ -51,77 +58,6 @@ diff --git a/source/nvidia-oot/scripts/conftest/conftest.sh b/source/nvidia-oot/
 +    esac
 
      CODE="#include <$file>"
-
-@@ -6499,7 +6510,8 @@ compile_check_conftest() {
-                     return __alloc_disk_node(q, 0, lkclass);
-             }"
-
--            compile_check_conftest "$CODE" "NV___ALLOC_DISK_NODE_HAS_LKCLASS_ARG" "" "types"
-+            # linux-5.15 has the 3-arg __alloc_disk_node with lkclass (added in v5.15)
-+            echo "#define NV___ALLOC_DISK_NODE_HAS_LKCLASS_ARG" | append_conftest "types"
-         ;;
-
-         blk_execute_rq_has_no_gendisk_arg)
-@@ -6545,7 +6557,8 @@ compile_check_conftest() {
-                 blk_mq_alloc_disk_for_queue();
-             }"
-
--            compile_check_conftest "$CODE" "NV_BLK_MQ_ALLOC_DISK_FOR_QUEUE_PRESENT" "" "functions"
-+            # linux-5.15 does not have blk_mq_alloc_disk_for_queue (added in v6.0)
-+            echo "#undef NV_BLK_MQ_ALLOC_DISK_FOR_QUEUE_PRESENT" | append_conftest "functions"
-         ;;
-
-         blk_mq_alloc_queue)
-@@ -6563,7 +6576,8 @@ compile_check_conftest() {
-                 blk_mq_alloc_queue();
-             }"
-
--            compile_check_conftest "$CODE" "NV_BLK_MQ_ALLOC_QUEUE_PRESENT" "" "functions"
-+            # linux-5.15 does not have blk_mq_alloc_queue (added in next-20240308)
-+            echo "#undef NV_BLK_MQ_ALLOC_QUEUE_PRESENT" | append_conftest "functions"
-         ;;
-
-         blk_mq_destroy_queue)
-@@ -6579,7 +6593,8 @@ compile_check_conftest() {
-                 blk_mq_destroy_queue();
-             }"
-
--            compile_check_conftest "$CODE" "NV_BLK_MQ_DESTROY_QUEUE_PRESENT" "" "functions"
-+            # linux-5.15 does not have blk_mq_destroy_queue (added in v6.0)
-+            echo "#undef NV_BLK_MQ_DESTROY_QUEUE_PRESENT" | append_conftest "functions"
-         ;;
-
-         blk_queue_max_hw_sectors)
-@@ -6861,7 +6876,8 @@ compile_check_conftest() {
-                 disk_check_media_change();
-             }"
-
--            compile_check_conftest "$CODE" "NV_DISK_CHECK_MEDIA_CHANGE_PRESENT" "" "functions"
-+            # linux-5.15 does not have disk_check_media_change (added in v6.5)
-+            echo "#undef NV_DISK_CHECK_MEDIA_CHANGE_PRESENT" | append_conftest "functions"
-         ;;
-
-         dma_slave_config_struct_has_slave_id)
-@@ -7783,7 +7799,8 @@ compile_check_conftest() {
-                 simple_util_dai_init();
-             }"
-
--            compile_check_conftest "$CODE" "NV_ASOC_SIMPLE_RENAMED_SIMPLE" "" "functions"
-+            # linux-5.15 does not have simple_util_dai_init (added in v6.7)
-+            echo "#undef NV_ASOC_SIMPLE_RENAMED_SIMPLE" | append_conftest "functions"
-         ;;
-
-         spi_get_chipselect)
-@@ -8151,7 +8168,8 @@ compile_check_conftest() {
-                     ptr = &enginectx;
-             }"
-
--            compile_check_conftest "$CODE" "NV_CONFTEST_REMOVE_STRUCT_CRYPTO_ENGINE_CTX" "" "functions"
-+            # linux-5.15 still has struct crypto_engine_ctx (removed in v6.6)
-+            echo "#undef NV_CONFTEST_REMOVE_STRUCT_CRYPTO_ENGINE_CTX" | append_conftest "functions"
-         ;;
-
-         # When adding a new conftest entry, please use the correct format for
 
 diff --git a/source/nvidia-oot/sound/soc/tegra-virt-alt/Makefile b/source/nvidia-oot/sound/soc/tegra-virt-alt/Makefile
 --- a/source/nvidia-oot/sound/soc/tegra-virt-alt/Makefile
