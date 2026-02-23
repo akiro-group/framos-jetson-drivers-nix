@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] Remove sudo depmod from modules_install target
+
+In a Nix sandbox build, sudo is not available and depmod cannot run
+anyway (no System.map, no writable /lib/modules).  The actual module
+installation into INSTALL_MOD_PATH is handled by the kernel build
+system when hwpm and modules are invoked with the modules_install goal;
+the explicit depmod call here is both unnecessary and broken.
+
+diff --git a/source/Makefile b/source/Makefile
+--- a/source/Makefile
++++ b/source/Makefile
+@@ -30,7 +30,6 @@ help:
+ 	@echo   "====================================================================================================================="
+
+ modules_install: hwpm modules
+-	@sudo depmod -a
+
+ conftest:
+ ifeq ($(MAKECMDGOALS), modules)
