@@ -194,39 +194,8 @@
             # tegra-camera).  Adding both would cause a buildEnv path conflict.
             boot.extraModulePackages = lib.mkForce [ framosDrivers ];
 
-            system.activationScripts.framosJetsonDtbo = {
-              text = ''
-                echo "framos: installing DTBO overlays..."
-                install -d /boot/framos/dtbo
-                cp -f ${framosDrivers}/boot/framos/dtbo/*.dtbo /boot/framos/dtbo/
-              '';
-              deps = [];
-            };
-
-            system.activationScripts.framosJetsonExtlinux = {
-              text = mkIf (cfg.sensors != []) ''
-                echo "framos: configuring extlinux overlays..."
-                EXTLINUX=/boot/extlinux/extlinux.conf
-                if [ ! -f "$EXTLINUX" ]; then
-                  echo "framos: $EXTLINUX not found, skipping overlay configuration"
-                else
-                  # Ensure FDT entry exists
-                  if ! ${pkgs.gnugrep}/bin/grep -q "^[[:space:]]*FDT" "$EXTLINUX"; then
-                    BASE_DTB=$(basename /boot/dtb/*)
-                    ${pkgs.gnused}/bin/sed -i "/MENU LABEL primary kernel/{N;N;s|$|\n      FDT /boot/dtb/$BASE_DTB|}" "$EXTLINUX"
-                  fi
-                  # Write (or replace) OVERLAYS line
-                  OVERLAYS="${concatMapStrings (o: "/boot/framos/dtbo/${o} ") allOverlays}"
-                  OVERLAYS="''${OVERLAYS% }"  # strip trailing space
-                  if ${pkgs.gnugrep}/bin/grep -q "^[[:space:]]*OVERLAYS" "$EXTLINUX"; then
-                    ${pkgs.gnused}/bin/sed -i "s|^[[:space:]]*OVERLAYS.*|      OVERLAYS $OVERLAYS|" "$EXTLINUX"
-                  else
-                    ${pkgs.gnused}/bin/sed -i "/^[[:space:]]*FDT/a\\      OVERLAYS $OVERLAYS" "$EXTLINUX"
-                  fi
-                fi
-              '';
-              deps = [ "framosJetsonDtbo" ];
-            };
+            hardware.nvidia-jetpack.flashScript.additionalDtbOverlays =
+              map (o: "${framosDrivers}/boot/framos/dtbo/${o}") allOverlays;
 
             system.activationScripts.framosJetsonFirmware = {
               text = ''
