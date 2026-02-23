@@ -207,18 +207,22 @@
               text = mkIf (cfg.sensors != []) ''
                 echo "framos: configuring extlinux overlays..."
                 EXTLINUX=/boot/extlinux/extlinux.conf
-                # Ensure FDT entry exists
-                if ! grep -q "^[[:space:]]*FDT" "$EXTLINUX"; then
-                  BASE_DTB=$(basename /boot/dtb/*)
-                  sed -i "/MENU LABEL primary kernel/{N;N;s|$|\n      FDT /boot/dtb/$BASE_DTB|}" "$EXTLINUX"
-                fi
-                # Write (or replace) OVERLAYS line
-                OVERLAYS="${concatMapStrings (o: "/boot/framos/dtbo/${o} ") allOverlays}"
-                OVERLAYS="''${OVERLAYS% }"  # strip trailing space
-                if grep -q "^[[:space:]]*OVERLAYS" "$EXTLINUX"; then
-                  sed -i "s|^[[:space:]]*OVERLAYS.*|      OVERLAYS $OVERLAYS|" "$EXTLINUX"
+                if [ ! -f "$EXTLINUX" ]; then
+                  echo "framos: $EXTLINUX not found, skipping overlay configuration"
                 else
-                  sed -i "/^[[:space:]]*FDT/a\\      OVERLAYS $OVERLAYS" "$EXTLINUX"
+                  # Ensure FDT entry exists
+                  if ! ${pkgs.gnugrep}/bin/grep -q "^[[:space:]]*FDT" "$EXTLINUX"; then
+                    BASE_DTB=$(basename /boot/dtb/*)
+                    ${pkgs.gnused}/bin/sed -i "/MENU LABEL primary kernel/{N;N;s|$|\n      FDT /boot/dtb/$BASE_DTB|}" "$EXTLINUX"
+                  fi
+                  # Write (or replace) OVERLAYS line
+                  OVERLAYS="${concatMapStrings (o: "/boot/framos/dtbo/${o} ") allOverlays}"
+                  OVERLAYS="''${OVERLAYS% }"  # strip trailing space
+                  if ${pkgs.gnugrep}/bin/grep -q "^[[:space:]]*OVERLAYS" "$EXTLINUX"; then
+                    ${pkgs.gnused}/bin/sed -i "s|^[[:space:]]*OVERLAYS.*|      OVERLAYS $OVERLAYS|" "$EXTLINUX"
+                  else
+                    ${pkgs.gnused}/bin/sed -i "/^[[:space:]]*FDT/a\\      OVERLAYS $OVERLAYS" "$EXTLINUX"
+                  fi
                 fi
               '';
               deps = [ "framosJetsonDtbo" ];
