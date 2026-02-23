@@ -75,20 +75,20 @@
             nativeBuildInputs = with pkgs; [ flex bison openssl dtc ]
               ++ config.boot.kernelPackages.kernel.moduleBuildDependencies;
 
-            KERNEL_SOURCE = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/source";
-            KERNEL_BUILD  = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/build";
+            KERNEL_SOURCE  = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/source";
+            KERNEL_HEADERS = "${config.boot.kernelPackages.kernel.dev}/lib/modules/${config.boot.kernelPackages.kernel.modDirVersion}/build";
 
             buildPhase = ''
               make -C source dtbs \
                 TEGRA_TOP=$PWD/source \
                 srctree="$KERNEL_SOURCE" \
-                objtree="$KERNEL_BUILD" \
+                objtree="$KERNEL_HEADERS" \
                 oottree=$PWD/source/kernel-devicetree \
                 HOSTCC=gcc
 
               make -C source modules \
-                KERNEL_HEADERS="$KERNEL_BUILD" \
-                KERNEL_OUTPUT="$KERNEL_BUILD" \
+                KERNEL_HEADERS="$KERNEL_HEADERS" \
+                KERNEL_OUTPUT="$KERNEL_HEADERS" \
                 NPROC=$(nproc)
             '';
 
@@ -100,7 +100,7 @@
               make -C source modules_install \
                 INSTALL_MOD_PATH=$out \
                 KERNEL_HEADERS="$KERNEL_HEADERS" \
-                KERNEL_OUTPUT="$KERNEL_OUTPUT"
+                KERNEL_OUTPUT="$KERNEL_HEADERS"
 
               install -d $out/bin
               install -m 0755 tools/jetson-config-camera-cli.py $out/bin/
