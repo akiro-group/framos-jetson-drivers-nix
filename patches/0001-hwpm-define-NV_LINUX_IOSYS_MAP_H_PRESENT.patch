@@ -8,7 +8,8 @@ emitted by the conftest build system — it is an orphaned guard.
 
 The kernel packaged in nixpkgs carries the iosys-map rename, so define
 the macro unconditionally in the hwpm Makefile and remove the now-dead
-dma-buf-map.h fallback branches from mem_mgmt_utils.h.
+dma-buf-map.h fallback branches from mem_mgmt_utils.h and align the
+version-code guards in mem_mgmt_utils.c to use the same macro.
 
 diff --git a/source/hwpm/drivers/tegra/hwpm/Makefile b/source/hwpm/drivers/tegra/hwpm/Makefile
 --- a/source/hwpm/drivers/tegra/hwpm/Makefile
@@ -48,3 +49,33 @@ diff --git a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h b/source/h
  };
 
  struct tegra_hwpm_allowlist_map {
+diff --git a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c
+--- a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c
++++ b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.c
+@@ -93,7 +93,7 @@
+ 	struct tegra_soc_hwpm_alloc_pma_stream *alloc_pma_stream)
+ {
+ 	struct tegra_hwpm_os_linux *hwpm_linux = NULL;
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
++#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
+ 	int err = 0;
+ #endif
+
+@@ -130,7 +130,7 @@
+ 	hwpm->mem_mgmt->mem_bytes_buf_va =
+ 		sg_dma_address(hwpm->mem_mgmt->mem_bytes_sgt->sgl);
+
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
++#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
+ 	/*
+ 	 * Kernel version 5.11 and above introduces dma_buf_map structure
+ 	 * (called iosys_map in versions later than 5.18).
+@@ -188,7 +188,7 @@
+ 	hwpm->mem_mgmt->stream_dma_buf = NULL;
+
+ 	if (hwpm->mem_mgmt->mem_bytes_kernel) {
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
++#if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
+ 		dma_buf_vunmap(hwpm->mem_mgmt->mem_bytes_dma_buf,
+ 			       &hwpm->mem_mgmt->mem_bytes_map);
+ #else
