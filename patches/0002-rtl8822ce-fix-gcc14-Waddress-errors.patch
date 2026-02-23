@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] rtl8822ce: fix -Waddress errors with GCC 14
+
+GCC 14 promotes -Waddress to an error under the -Werror inherited from
+the top-level nvidia-oot Makefile.  Three instances of always-true
+pointer comparisons are flagged:
+
+1. rtw_sta_mgt.c: `&psta->lock != NULL` — address of a struct member
+   is never null; the unconditional call is the correct behaviour.
+
+2. phydm_dig.c, phydm_dynamictxpower.c: `input[i + 1]` where input is
+   declared as `char input[][16]`.  The array element decays to a
+   char * that can never be null; the intent is to test whether the
+   string is non-empty.  Fix: check `input[i + 1][0]` instead.
+
+diff --git a/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/core/rtw_sta_mgt.c b/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/core/rtw_sta_mgt.c
+--- a/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/core/rtw_sta_mgt.c
++++ b/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/core/rtw_sta_mgt.c
+@@ -390,8 +390,7 @@
+ void rtw_mfree_stainfo(struct sta_info *psta)
+ {
+
+-	if (&psta->lock != NULL)
+-		_rtw_spinlock_free(&psta->lock);
++	_rtw_spinlock_free(&psta->lock);
+
+ 	_rtw_free_sta_xmit_priv_lock(&psta->sta_xmitpriv);
+ 	_rtw_free_sta_recv_priv_lock(&psta->sta_recvpriv);
+
+diff --git a/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dig.c b/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dig.c
+--- a/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dig.c
++++ b/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dig.c
+@@ -969,7 +969,7 @@
+ 			 "Reset all hwigi : {5}\n");
+ 	} else {
+ 		for (i = 0; i < 7; i++) {
+-			if (input[i + 1])
++			if (input[i + 1][0])
+ 				PHYDM_SSCANF(input[i + 1], DCMD_DECIMAL,
+ 					     &var1[i]);
+ 		}
+
+diff --git a/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dynamictxpower.c b/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dynamictxpower.c
+--- a/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dynamictxpower.c
++++ b/source/nvidia-oot/drivers/net/wireless/realtek/rtl8822ce/hal/phydm/phydm_dynamictxpower.c
+@@ -653,7 +653,7 @@
+ 		#endif
+ 	} else {
+ 		for (i = 0; i < 7; i++) {
+-			if (input[i + 1])
++			if (input[i + 1][0])
+ 				PHYDM_SSCANF(input[i + 1], DCMD_DECIMAL,
+ 					     &var1[i]);
+ 		}

@@ -74,7 +74,7 @@
 
             patches = [
               "${self}/patches/0001-nixos-fix-split-kernel-tree-build.patch"
-              "${self}/patches/0002-rtl8822ce-fix-bogus-null-check-on-lock-address.patch"
+              "${self}/patches/0002-rtl8822ce-fix-gcc14-Waddress-errors.patch"
             ];
 
             nativeBuildInputs = with pkgs; [ flex bison openssl dtc ]
