@@ -199,16 +199,6 @@
               }
             ]) cfg.sensors;
 
-            # framosDrivers ships a modified tegra-camera.ko; strip it from
-            # nvidia-oot-modules so buildEnv doesn't see a path conflict.
-            boot.kernelPackages = lib.mkForce (config.boot.kernelPackages.extend (final: prev: {
-              nvidia-oot-modules = prev.nvidia-oot-modules.overrideAttrs (old: {
-                postInstall = (old.postInstall or "") + ''
-                  find $out/lib/modules -name "tegra-camera.ko.xz" -delete
-                '';
-              });
-            }));
-
             boot.extraModulePackages = [ framosDrivers ];
 
             hardware.nvidia-jetpack.flashScript.additionalDtbOverlays =
