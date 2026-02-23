@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] hwpm: define NV_LINUX_IOSYS_MAP_H_PRESENT for nixpkgs kernel
+
+NV_LINUX_IOSYS_MAP_H_PRESENT is used as a guard throughout the hwpm and
+nvidia-oot drivers to select between struct iosys_map (renamed from
+dma_buf_map) and the old struct dma_buf_map fallback. The macro is never
+emitted by the conftest build system — it is an orphaned guard.
+
+The kernel packaged in nixpkgs carries the iosys-map rename, so define
+the macro unconditionally in the hwpm Makefile and remove the now-dead
+dma-buf-map.h fallback branches from mem_mgmt_utils.h.
+
+diff --git a/source/hwpm/drivers/tegra/hwpm/Makefile b/source/hwpm/drivers/tegra/hwpm/Makefile
+--- a/source/hwpm/drivers/tegra/hwpm/Makefile
++++ b/source/hwpm/drivers/tegra/hwpm/Makefile
+@@ -20,6 +20,7 @@
+ # For OOT builds, set required config flags
+ ifeq ($(CONFIG_TEGRA_OOT_MODULE),m)
+ CONFIG_TEGRA_HWPM_OOT := y
++ccflags-y += -DNV_LINUX_IOSYS_MAP_H_PRESENT
+ ccflags-y += -DCONFIG_TEGRA_HWPM_OOT
+
+ CONFIG_TEGRA_FUSE_UPSTREAM := y
+diff --git a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h
+--- a/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h
++++ b/source/hwpm/drivers/tegra/hwpm/os/linux/mem_mgmt_utils.h
+@@ -23,11 +23,7 @@
+ #include <linux/version.h>
+ #if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
+ #include <linux/iosys-map.h>
+-#else
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+-#include <linux/dma-buf-map.h>
+ #endif
+-#endif
+
+ /* This macro is copy of TEGRA_SOC_HWPM_MEM_BYTES_INVALID */
+ #define TEGRA_HWPM_MEM_BYTES_INVALID	0xffffffff
+@@ -53,11 +49,7 @@
+ 	void *mem_bytes_kernel;
+ #if defined(NV_LINUX_IOSYS_MAP_H_PRESENT)
+ 	struct iosys_map mem_bytes_map;
+-#else
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+-	struct dma_buf_map mem_bytes_map;
+ #endif
+-#endif
+ };
+
+ struct tegra_hwpm_allowlist_map {
