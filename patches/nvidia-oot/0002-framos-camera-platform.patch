@@ -1,0 +1,824 @@
+--- a/drivers/media/platform/tegra/camera/camera_common.c
++++ b/drivers/media/platform/tegra/camera/camera_common.c
+@@ -78,6 +78,16 @@
+ 		MEDIA_BUS_FMT_SBGGR10_1X10,
+ 		V4L2_COLORSPACE_SRGB,
+ 		V4L2_PIX_FMT_SBGGR10,
++	},
++	{	
++		MEDIA_BUS_FMT_SGBRG8_1X8,
++		V4L2_COLORSPACE_SRGB,
++		V4L2_PIX_FMT_SGBRG8,
++	},
++	{
++		MEDIA_BUS_FMT_SGRBG8_1X8,
++		V4L2_COLORSPACE_SRGB,
++		V4L2_PIX_FMT_SGRBG8,
+ 	},
+ 	{
+ 		MEDIA_BUS_FMT_SRGGB8_1X8,
+@@ -585,6 +595,7 @@
+ int camera_common_try_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
+ {
+ 	struct camera_common_data *s_data = to_camera_common_data(sd->dev);
++	struct camera_common_sensor_ops *sensor_ops = s_data->ops;
+ 	struct tegra_channel *chan = v4l2_get_subdev_hostdata(sd);
+ 	struct v4l2_control hdr_control;
+ 	const struct camera_common_frmfmt *frmfmt;
+@@ -664,6 +675,14 @@
+ 
+ 	if (!camera_common_verify_code(chan, mf->code))
+ 		err = -EINVAL;
++
++	if (sensor_ops->check_unsupported_mode){
++	    err = sensor_ops->check_unsupported_mode(s_data, mf);
++	    if (err) {
++		    dev_err(sd->dev, "Error checking unsupported mode\n");
++		    return err;
++	    }
++	}
+ 
+ verify_code:
+ 	mf->field = V4L2_FIELD_NONE;
+@@ -679,6 +698,7 @@
+ int camera_common_s_fmt(struct v4l2_subdev *sd, struct v4l2_mbus_framefmt *mf)
+ {
+ 	struct camera_common_data *s_data = to_camera_common_data(sd->dev);
++	struct camera_common_sensor_ops *sensor_ops = s_data->ops;
+ 	int ret;
+ 
+ 	dev_dbg(sd->dev, "%s(%u) size %i x %i\n", __func__,
+@@ -695,6 +715,14 @@
+ 
+ 	s_data->colorfmt = camera_common_find_datafmt(mf->code);
+ 
++	if (sensor_ops->after_set_pixel_format && ret == 0){
++	    ret = sensor_ops->after_set_pixel_format(s_data);
++	    if (ret) {
++		    dev_err(sd->dev, "Error getting current pixel format\n");
++		    return ret;
++	    }
++	}
++
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(camera_common_s_fmt);
+--- a/drivers/media/platform/tegra/camera/regmap_util.c
++++ b/drivers/media/platform/tegra/camera/regmap_util.c
+@@ -165,5 +165,87 @@
+ }
+ 
+ EXPORT_SYMBOL_GPL(regmap_util_write_table_16_as_8);
++
++int
++regmap_util_write_table_32(struct regmap *regmap,
++			  const struct reg_32 table[],
++			  const struct reg_32 override_list[],
++			  int num_override_regs, u32 wait_ms_addr, u32 end_addr)
++{
++	int err = 0;
++	const struct reg_32 *next;
++	int i;
++	u32 val;
++
++	int range_start = -1;
++	int range_count = 0;
++	/* bug 200048392 -
++	 * the vi i2c cannot take a FIFO buffer bigger than 16 bytes
++	 */
++	u32 range_vals[16];
++	int max_range_vals = ARRAY_SIZE(range_vals);
++
++	for (next = table;; next++) {
++		/* If we have a range open and */
++		/* either the address doesn't match */
++		/* or the temporary storage is full, flush */
++		if  ((next->addr != range_start + range_count) ||
++		     (next->addr == end_addr) ||
++		     (next->addr == wait_ms_addr) ||
++		     (range_count == max_range_vals)) {
++
++			if (range_count == 1) {
++				err =
++				    regmap_write(regmap, range_start,
++						 range_vals[0]);
++			} else if (range_count > 1) {
++				err =
++				    regmap_bulk_write(regmap, range_start,
++						      &range_vals[0],
++						      range_count);
++			}
++
++			if (err) {
++				pr_err("%s:regmap_util_write_table:%d",
++				       __func__, err);
++				return err;
++			}
++
++			range_start = -1;
++			range_count = 0;
++
++			/* Handle special address values */
++			if (next->addr == end_addr)
++				break;
++
++			if (next->addr == wait_ms_addr) {
++				msleep_range(next->val);
++				continue;
++			}
++		}
++
++		val = next->val;
++
++		/* When an override list is passed in, replace the reg */
++		/* value to write if the reg is in the list            */
++		if (override_list) {
++			for (i = 0; i < num_override_regs; i++) {
++				if (next->addr == override_list[i].addr) {
++					val = override_list[i].val;
++					break;
++				}
++			}
++		}
++
++		if (range_start == -1)
++			range_start = next->addr;
++
++		range_vals[range_count++] = val;
++	}
++	return 0;
++}
++
++EXPORT_SYMBOL_GPL(regmap_util_write_table_32);
++
+ MODULE_LICENSE("GPL");
+ 
+--- a/drivers/media/platform/tegra/camera/sensor_common.c
++++ b/drivers/media/platform/tegra/camera/sensor_common.c
+@@ -54,6 +54,7 @@
+ 	u64 val64 = 0;
+ 	u64 rate;
+ 	int depth;
++	struct device_node *sensor_node;
+ 
+ 	err = of_property_read_string(node, "phy_mode", &temp_str);
+ 	if (err) {
+@@ -92,29 +93,67 @@
+ 	}
+ 	signal->num_lanes = value;
+ 
+-	err = read_property_u64(node, "pix_clk_hz", &val64);
+-	if (err) {
+-		dev_err(dev, "%s:pix_clk_hz property missing\n", __func__);
+-		return err;
++	/* Check if Framos */
++	sensor_node = of_get_parent(node);
++	err = of_property_read_string(sensor_node, "compatible", &temp_str);
++	if (err)
++		return -ENODATA;
++	if (!strncmp(temp_str, "framos", sizeof("framos")-1)) {
++		/* Framos */
++		if (of_get_child_by_name(sensor_node, "gmsl-link") == NULL) {
++			/* Framos without GMSL*/
++			if(of_property_read_bool(node, "serdes_pix_clk_hz")) {
++				err = of_remove_property(node, of_find_property(node, "serdes_pix_clk_hz", NULL));
++				if (err) {
++					dev_warn(dev, "%s:failed to remove serdes_pix_clk_hz\n", __func__);
++				}	
++			}
++			err = read_property_u64(node, "pix_clk_hz", &val64);
++			if (err) {
++				dev_err(dev, "%s:pix_clk_hz property missing\n", __func__);
++				return err;
++			}
++			signal->pixel_clock.val = val64;
++			rate = signal->pixel_clock.val;
++		}
++		else {
++			/* Framos with GMSL*/
++			err = read_property_u64(node, "serdes_pix_clk_hz", &val64);
++			if (err) {
++				dev_err(dev, "%s:serdes_pix_clk_hz property missing\n", __func__);
++				return err;
++			}
++			signal->serdes_pixel_clock.val = val64;
++			rate = signal->serdes_pixel_clock.val;
++		}
+ 	}
+-	signal->pixel_clock.val = val64;
+ 
+-	err = read_property_u64(node, "serdes_pix_clk_hz", &val64);
+-	if (err)
+-		signal->serdes_pixel_clock.val = 0;
+-	else
+-		signal->serdes_pixel_clock.val = val64;
++	else {
++		/* Not Framos */
++		err = read_property_u64(node, "pix_clk_hz", &val64);
++		if (err) {
++			dev_err(dev, "%s:pix_clk_hz property missing\n", __func__);
++			return err;
++		}
++		signal->pixel_clock.val = val64;
+ 
+-	if (signal->serdes_pixel_clock.val != 0ULL) {
+-		if (signal->serdes_pixel_clock.val < signal->pixel_clock.val) {
+-			dev_err(dev,
+-				"%s: serdes_pix_clk_hz is lower than pix_clk_hz!\n",
+-				__func__);
+-			return -EINVAL;
++		err = read_property_u64(node, "serdes_pix_clk_hz", &val64);
++		if (err)
++			signal->serdes_pixel_clock.val = 0;
++		else
++			signal->serdes_pixel_clock.val = val64;
++
++		if (signal->serdes_pixel_clock.val != 0ULL) {
++			if (signal->serdes_pixel_clock.val < signal->pixel_clock.val) {
++				dev_err(dev,
++					"%s: serdes_pix_clk_hz is lower than pix_clk_hz!\n",
++					__func__);
++				return -EINVAL;
++			}
++			rate = signal->serdes_pixel_clock.val;
++		} else {
++			rate = signal->pixel_clock.val;
+ 		}
+-		rate = signal->serdes_pixel_clock.val;
+-	} else {
+-		rate = signal->pixel_clock.val;
+ 	}
+ 
+ 	err = read_property_u32(node, "csi_pixel_bit_depth", &depth);
+@@ -243,6 +282,12 @@
+ 		*format = V4L2_PIX_FMT_SGBRG12;
+ 	else if (strncmp(pixel_t, "bayer_grbg12", size) == 0)
+ 		*format = V4L2_PIX_FMT_SGRBG12;
++	else if (strncmp(pixel_t, "bayer_gbrg8", size) == 0)
++		*format = V4L2_PIX_FMT_SGBRG8;
++	else if (strncmp(pixel_t, "bayer_rggb8", size) == 0)
++		*format = V4L2_PIX_FMT_SRGGB8;
++	else if (strncmp(pixel_t, "bayer_grbg8", size) == 0)
++		*format = V4L2_PIX_FMT_SGRBG8;
+ 	else if (strncmp(pixel_t, "rgb_rgb88824", size) == 0)
+ 		*format = V4L2_PIX_FMT_RGB24;
+ 	else if (strncmp(pixel_t, "bayer_wdr_pwl_rggb12", size) == 0)
+@@ -251,8 +296,16 @@
+ 		*format = V4L2_PIX_FMT_SGBRG12;
+ 	else if (strncmp(pixel_t, "bayer_wdr_pwl_grbg12", size) == 0)
+ 		*format = V4L2_PIX_FMT_SGRBG12;
++	else if (strncmp(pixel_t, "bayer_wdr_pwl_rggb10", size) == 0)
++		*format = V4L2_PIX_FMT_SRGGB10;
++	else if (strncmp(pixel_t, "bayer_wdr_pwl_gbrg10", size) == 0)
++		*format = V4L2_PIX_FMT_SGBRG10;
++	else if (strncmp(pixel_t, "bayer_wdr_pwl_grbg10", size) == 0)
++		*format = V4L2_PIX_FMT_SGRBG10;
+ 	else if (strncmp(pixel_t, "bayer_wdr_dol_rggb10", size) == 0)
+ 		*format = V4L2_PIX_FMT_SRGGB10;
++	else if (strncmp(pixel_t, "bayer_wdr_dol_rggb12", size) == 0)
++		*format = V4L2_PIX_FMT_SRGGB12;
+ #if 0 /* disable for Canonical kenrel */
+ 	else if (strncmp(pixel_t, "bayer_xbggr10p", size) == 0)
+ 		*format = V4L2_PIX_FMT_XBGGR10P;
+--- a/drivers/media/platform/tegra/camera/tegracam_ctrls.c
++++ b/drivers/media/platform/tegra/camera/tegracam_ctrls.c
+@@ -42,12 +42,64 @@
+  * which must be overriden
+  */
+ static const u32 tegracam_override_cids[] = {
++	TEGRA_CAMERA_CID_CONVERSION_GAIN, // it has to be before gain to define range
+ 	TEGRA_CAMERA_CID_GAIN,
+ 	TEGRA_CAMERA_CID_EXPOSURE,
+ 	TEGRA_CAMERA_CID_FRAME_RATE,
++	TEGRA_CAMERA_CID_BLACK_LEVEL,
++	TEGRA_CAMERA_CID_GAIN_OFFSET,
++	TEGRA_CAMERA_CID_EXPOSURE_THRESHOLD,
++	TEGRA_CAMERA_CID_EXPOSURE_THRESHOLD_HIGH,
++	TEGRA_CAMERA_CID_GC_START_POINT_FIRST,
++	TEGRA_CAMERA_CID_GC_START_POINT_SECOND,
++	TEGRA_CAMERA_CID_GC_GAIN_POINT_FIRST,
++	TEGRA_CAMERA_CID_GC_GAIN_POINT_SECOND,
+ };
+ #define NUM_OVERRIDE_CTRLS ARRAY_SIZE(tegracam_override_cids)
+ 
++static const char * const is_common_stream_mode[] = {
++    [0] = "Standalone",
++    [1] = "Sync Mode",
++    [2] = "External HW Sync Mode",
++};
++
++static const char * const is_common_operation_mode[] = {
++    [0] = "Master Mode",
++    [1] = "Slave Mode",
++};
++
++static const char * const is_common_sync_function[] = {
++    [0] = "No Sync",
++    [1] = "Internal Sync",
++    [2] = "External Sync",
++};
++
++static const char * const is_common_i2c_broadcast[] = {
++    [0] = "Unicast",
++    [1] = "Broadcast",
++};
++
++static const char * const is_common_flip_mirror[] = {
++    [0]   = "No Flip/Mirror",
++    [1]   = "Vertical Flip",
++    [2]   = "Horizontal Mirror",
++    [3]   = "Vertical + Horizontal Flip/Mirror",
++};
++
++static const char * const is_global_shutter_mode[] = {
++    [0] = "Normal Mode",
++    [1] = "Sequential Trigger Mode",
++    [2] = "Fast Trigger Mode",
++};
++
++static const char * const is_test_pattern_menu[] = {
++    [0] = "Dummy",
++};
++
++const char * const is_data_rate_menu[] = {
++    [0] = "Dummy",
++};
++
+ static const u32 tegracam_sync_cids[] = {
+ 	TEGRA_CAMERA_CID_ALTERNATING_EXPOSURE,
+ };
+@@ -71,7 +123,7 @@
+ 		.id = TEGRA_CAMERA_CID_EXPOSURE,
+ 		.name = "Exposure",
+ 		.type = V4L2_CTRL_TYPE_INTEGER64,
+-		.flags = V4L2_CTRL_FLAG_SLIDER,
++		.flags = V4L2_CTRL_FLAG_SLIDER | V4L2_CTRL_FLAG_UPDATE,
+ 		.min = CTRL_U64_MIN,
+ 		.max = CTRL_U64_MAX,
+ 		.def = CTRL_U64_MIN,
+@@ -93,7 +145,7 @@
+ 		.id = TEGRA_CAMERA_CID_FRAME_RATE,
+ 		.name = "Frame Rate",
+ 		.type = V4L2_CTRL_TYPE_INTEGER64,
+-		.flags = V4L2_CTRL_FLAG_SLIDER,
++		.flags = V4L2_CTRL_FLAG_SLIDER | V4L2_CTRL_FLAG_UPDATE,
+ 		.min = CTRL_U64_MIN,
+ 		.max = CTRL_U64_MAX,
+ 		.def = CTRL_U64_MIN,
+@@ -182,6 +234,109 @@
+ 		.max = CTRL_U8_MAX,
+ 		.step = 1,
+ 	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_OPERATION_MODE,
++		.name = "Operation Mode",
++		.type = V4L2_CTRL_TYPE_MENU,
++		.min = 0,
++		.max = ARRAY_SIZE(is_common_operation_mode) -1,
++		.def = 0,
++		.qmenu = is_common_operation_mode,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_SYNC_MODE,
++		.name = "Synchronizing Function",
++		.type = V4L2_CTRL_TYPE_MENU,
++		.min = 0,
++		.max = ARRAY_SIZE(is_common_sync_function) -1,
++		.def = 0,
++		.qmenu = is_common_sync_function,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_BROADCAST,
++		.name = "I2C Broadcast controls",
++		.type = V4L2_CTRL_TYPE_MENU,
++		.min = 0,
++		.max = ARRAY_SIZE(is_common_i2c_broadcast) -1,
++		.def = 0,
++		.qmenu = is_common_i2c_broadcast,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_BLACK_LEVEL,
++		.name = "Black Level",
++		.type = V4L2_CTRL_TYPE_INTEGER64,
++		.flags = V4L2_CTRL_FLAG_SLIDER | V4L2_CTRL_FLAG_EXECUTE_ON_WRITE,
++		.min = CTRL_U64_MIN,
++		.max = CTRL_U64_MAX,
++		.def = CTRL_U64_MIN,
++		.step = 1,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_DIGITAL_GAIN,
++		.name = "Digital gain",
++		.type = V4L2_CTRL_TYPE_INTEGER64,
++		.flags = V4L2_CTRL_FLAG_SLIDER,
++		.min = CTRL_U64_MIN,
++		.max = CTRL_U64_MAX,
++		.def = CTRL_U64_MIN,
++		.step = 1,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_FLIP_MIRROR,
++		.name = "Flip/Mirror",
++		.type = V4L2_CTRL_TYPE_MENU,
++		.min = 0,
++		.max = ARRAY_SIZE(is_common_flip_mirror) -1,
++		.def = 0,
++		.qmenu = is_common_flip_mirror,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_SHUTTER_MODE,
++		.name = "Global Shutter Mode",
++		.type = V4L2_CTRL_TYPE_MENU,
++		.min = 0,
++		.max = ARRAY_SIZE(is_global_shutter_mode) -1,
++		.def = 0,
++		.qmenu = is_global_shutter_mode,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_TEST_PATTERN,
++		.name = "Test Pattern",
++		.type = V4L2_CTRL_TYPE_MENU,
++		.min = 0,
++		.max = ARRAY_SIZE(is_test_pattern_menu) - 1,
++		.def = 0,
++		.qmenu = is_test_pattern_menu,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_DATA_RATE,
++		.name = "Data Rate",
++		.type = V4L2_CTRL_TYPE_MENU,
++		.min = 0,
++		.max = ARRAY_SIZE(is_data_rate_menu) - 1,
++		.def = 0,
++		.qmenu = is_data_rate_menu,
++	},
++	{
++		.ops = &tegracam_ctrl_ops,
++		.id = TEGRA_CAMERA_CID_CONVERSION_GAIN,
++		.name = "Conversion Gain",
++		.type = V4L2_CTRL_TYPE_BOOLEAN,
++		.flags = V4L2_CTRL_FLAG_UPDATE,
++		.min = 0,
++		.max = 1,
++		.def = 0,
++		.step = 1,
++	},
+ };
+ 
+ static int tegracam_get_ctrl_index(u32 cid)
+@@ -308,6 +463,18 @@
+ 		return 0;
+ 	case TEGRA_CAMERA_CID_HDR_EN:
+ 		return 0;
++	case TEGRA_CAMERA_CID_DATA_RATE:
++		err = ops->set_data_rate(tc_dev, *ctrl->p_new.p_u32);
++		break;
++	case TEGRA_CAMERA_CID_OPERATION_MODE:
++		err = ops->set_operation_mode(tc_dev, *ctrl->p_new.p_u32);
++		break;
++	case TEGRA_CAMERA_CID_SYNC_MODE:
++		err = ops->set_sync_mode(tc_dev, *ctrl->p_new.p_u32);
++		break;
++	case TEGRA_CAMERA_CID_SHUTTER_MODE:
++        err = ops->set_shutter_mode(tc_dev, *ctrl->p_new.p_u32);
++        break;
+ 	}
+ 
+ 	if (v4l2_subdev_call(&s_data->subdev, video,
+@@ -326,16 +493,19 @@
+ 	/* For controls that require sensor to be on */
+ 	switch (ctrl->id) {
+ 	case TEGRA_CAMERA_CID_GAIN:
+-		if (*ctrl->p_new.p_s64 == ctrlprops->max_gain_val + 1)
+-			return 0;
++		//if (*ctrl->p_new.p_s64 == ctrlprops->max_gain_val + 1)
++		//	return 0;
+ 		err = ops->set_gain(tc_dev, *ctrl->p_new.p_s64);
+ 		break;
+ 	case TEGRA_CAMERA_CID_FRAME_RATE:
+ 		err = ops->set_frame_rate(tc_dev, *ctrl->p_new.p_s64);
+ 		break;
++	case TEGRA_CAMERA_CID_CONVERSION_GAIN:
++		err = ops->set_conversion_gain(tc_dev, ctrl->val);
++		break;
+ 	case TEGRA_CAMERA_CID_EXPOSURE:
+-		if (*ctrl->p_new.p_s64 == ctrlprops->max_exp_time.val + 1)
+-			return 0;
++		//if (*ctrl->p_new.p_s64 == ctrlprops->max_exp_time.val + 1)
++		//	return 0;
+ 		err = ops->set_exposure(tc_dev, *ctrl->p_new.p_s64);
+ 		break;
+ 	case TEGRA_CAMERA_CID_EXPOSURE_SHORT:
+@@ -348,6 +518,21 @@
+ 		err = ops->set_alternating_exposure(tc_dev,
+ 			(struct alternating_exposure_cfg *)ctrl->p_new.p);
+ 		break;
++	case TEGRA_CAMERA_CID_BROADCAST:
++		err = ops->set_broadcast_ctrl(tc_dev, ctrl);
++		break;
++	case TEGRA_CAMERA_CID_BLACK_LEVEL:
++		err = ops->set_black_level(tc_dev, *ctrl->p_new.p_s64);
++		break;
++	case TEGRA_CAMERA_CID_DIGITAL_GAIN:
++		err = ops->set_digital_gain(tc_dev, *ctrl->p_new.p_s64);
++		break;
++	case TEGRA_CAMERA_CID_FLIP_MIRROR:
++		err = ops->set_orientation(tc_dev, *ctrl->p_new.p_u32);
++		break;
++	case TEGRA_CAMERA_CID_TEST_PATTERN:
++		err = ops->set_test_pattern(tc_dev, *ctrl->p_new.p_u32);
++		break;
+ 	default:
+ 		pr_err("%s: unknown ctrl id.\n", __func__);
+ 		return -EINVAL;
+@@ -540,6 +725,9 @@
+ 				else
+ 					err = ops->set_gain(tc_dev, val);
+ 				break;
++			case TEGRA_CAMERA_CID_CONVERSION_GAIN:
++				err = ops->set_conversion_gain(tc_dev, control.value);
++				break;
+ 			case TEGRA_CAMERA_CID_EXPOSURE:
+ 				if (is_blob_supported)
+ 					err = ops->set_exposure_ex(tc_dev,
+@@ -553,7 +741,31 @@
+ 								blob, val);
+ 				else
+ 					err = ops->set_frame_rate(tc_dev, val);
++				break;
++			case TEGRA_CAMERA_CID_BLACK_LEVEL:
++				err = ops->set_black_level(tc_dev, val);
++				break;
++			case TEGRA_CAMERA_CID_GC_START_POINT_FIRST:
++				err = ops->set_gc_point_first(tc_dev, val);
++				break;
++			case TEGRA_CAMERA_CID_GC_START_POINT_SECOND:
++				err = ops->set_gc_point_second(tc_dev, val);
+ 				break;
++			case TEGRA_CAMERA_CID_GC_GAIN_POINT_FIRST:
++				err = ops->set_gc_gain_point_first(tc_dev, val);
++				break;
++			case TEGRA_CAMERA_CID_GC_GAIN_POINT_SECOND:
++				err = ops->set_gc_gain_point_second(tc_dev, val);
++				break;
++			case TEGRA_CAMERA_CID_GAIN_OFFSET:
++				err = ops->set_gain_offset(tc_dev, val);
++				break;
++			case TEGRA_CAMERA_CID_EXPOSURE_THRESHOLD:
++				err = ops->set_exposure_threshold(tc_dev, val);
++				break;
++			case TEGRA_CAMERA_CID_EXPOSURE_THRESHOLD_HIGH:
++				err = ops->set_exposure_threshold_high(tc_dev, val);
++				break;
+ 			default:
+ 				dev_err(dev, "%s: unsupported override %x\n",
+ 						__func__, control.id);
+@@ -608,7 +820,8 @@
+ 		case TEGRA_CAMERA_CID_GAIN:
+ 			err = v4l2_ctrl_modify_range(ctrl,
+ 				ctrlprops->min_gain_val,
+-				ctrlprops->max_gain_val + 1,
++				//ctrlprops->max_gain_val + 1,
++				ctrlprops->max_gain_val,
+ 				ctrlprops->step_gain_val,
+ 				ctrlprops->default_gain);
+ 			break;
+@@ -622,7 +835,8 @@
+ 		case TEGRA_CAMERA_CID_EXPOSURE:
+ 			err = v4l2_ctrl_modify_range(ctrl,
+ 				ctrlprops->min_exp_time.val,
+-				ctrlprops->max_exp_time.val + 1,
++				//ctrlprops->max_exp_time.val + 1,
++				ctrlprops->max_exp_time.val,
+ 				ctrlprops->step_exp_time.val,
+ 				ctrlprops->default_exp_time.val);
+ 			break;
+@@ -653,6 +867,21 @@
+ 				max_short_exp_time,
+ 				default_short_exp_time);
+ 			break;
++		case TEGRA_CAMERA_CID_BLACK_LEVEL:
++	        	err = v4l2_ctrl_modify_range(ctrl,
++                                         ctrl->minimum,
++                                         s_data->blklvl_max_range,
++                                         ctrl->step, ctrl->default_value);
++            		break;
++        	case TEGRA_CAMERA_CID_DIGITAL_GAIN:
++        		ctrl->default_value = clamp_val(s_data->dig_gain_def_value,
++                                                     s_data->dig_gain_min_range,
++                                                     s_data->dig_gain_max_range);
++                        err = v4l2_ctrl_modify_range(ctrl,
++                                         s_data->dig_gain_min_range,
++                                         s_data->dig_gain_max_range,
++                                         ctrl->step, ctrl->default_value);
++            		break;
+ 		default:
+ 			/* Not required to modify these control ranges */
+ 			break;
+@@ -769,6 +998,13 @@
+ 			if (ops->set_frame_rate_ex != NULL)
+ 				sensor_ex_ops++;
+ 			break;
++		case TEGRA_CAMERA_CID_CONVERSION_GAIN:
++			if (ops->set_conversion_gain == NULL)
++				dev_err(dev,
++					"Missing TEGRA_CAMERA_CID_CONVERSION_GAIN implementation\n");
++			else
++				sensor_ops++;
++			break;
+ 		case TEGRA_CAMERA_CID_GROUP_HOLD:
+ 			dev_err(dev,
+ 				"TEGRA_CAMERA_CID_GROUP_HOLD contorl is enabled in framework by default, no need to add it in driver\n");
+@@ -819,6 +1055,22 @@
+ 		/* The below controls are handled by framework */
+ 		case TEGRA_CAMERA_CID_SENSOR_MODE_ID:
+ 		case TEGRA_CAMERA_CID_HDR_EN:
++		case TEGRA_CAMERA_CID_DATA_RATE:
++		case TEGRA_CAMERA_CID_TEST_PATTERN:
++		case TEGRA_CAMERA_CID_HDR_CONTROL:
++		case TEGRA_CAMERA_CID_HDR_LIN_KNEE1:
++		case TEGRA_CAMERA_CID_HDR_LIN_KNEE2:
++		case TEGRA_CAMERA_CID_XVS_XHS_STATE:
++		case TEGRA_CAMERA_CID_PWL_LUT_CONTROL:
++		case TEGRA_CAMERA_CID_DIGITAL_GAIN_SHORT:
++		case TEGRA_CAMERA_CID_BLACK_LEVEL_SHORT:
++		case TEGRA_CAMERA_CID_OPERATION_MODE:
++		case TEGRA_CAMERA_CID_SYNC_MODE:
++		case TEGRA_CAMERA_CID_BROADCAST:
++		case TEGRA_CAMERA_CID_BLACK_LEVEL:
++		case TEGRA_CAMERA_CID_DIGITAL_GAIN:
++		case TEGRA_CAMERA_CID_FLIP_MIRROR:
++		case TEGRA_CAMERA_CID_SHUTTER_MODE:
+ 			mode_ops++;
+ 			break;
+ 		default:
+@@ -942,6 +1194,15 @@
+ 			ops->numctrls,
+ 			TEGRA_CAMERA_CID_FRAME_RATE)) {
+ 			dev_err(dev, "Missing TEGRA_CAMERA_CID_FRAME_RATE registration\n");
++			errors_found++;
++		}
++	}
++
++	if (ops->set_conversion_gain != NULL ) {
++		if (!find_matching_cid(ops->ctrl_cid_list,
++			ops->numctrls,
++			TEGRA_CAMERA_CID_CONVERSION_GAIN)) {
++			dev_err(dev, "Missing TEGRA_CAMERA_CID_CONVERSION_GAIN registration\n");
+ 			errors_found++;
+ 		}
+ 	}
+--- a/drivers/media/platform/tegra/camera/tegracam_v4l2.c
++++ b/drivers/media/platform/tegra/camera/tegracam_v4l2.c
+@@ -210,6 +210,7 @@
+ 				bool is_sensor)
+ {
+ 	struct camera_common_data *s_data = tc_dev->s_data;
++	struct camera_common_sensor_ops *sensor_ops = s_data->ops;
+ 	struct tegracam_ctrl_handler *ctrl_hdl;
+ 	struct v4l2_subdev *sd = NULL;
+ 	struct device *dev = tc_dev->dev;
+@@ -234,6 +235,13 @@
+ 	if (err) {
+ 		dev_err(dev, "Failed to init ctrls %s\n", tc_dev->name);
+ 		return err;
++	}
++	if (sensor_ops->init_private_controls){
++	    err = sensor_ops->init_private_controls(tc_dev);
++	    if (err) {
++		    dev_err(dev, "Failed to init private ctrls %s\n", tc_dev->name);
++		    return err;
++	    }
+ 	}
+ 	if (ctrl_hdl->ctrl_ops != NULL)
+ 		tc_dev->numctrls = ctrl_hdl->ctrl_ops->numctrls;
+--- a/drivers/media/platform/tegra/camera/vi/channel.c
++++ b/drivers/media/platform/tegra/camera/vi/channel.c
+@@ -712,6 +712,8 @@
+ 	} else {
+ 		sizes[0] = chan->format.sizeimage;
+ 	}
++
++	sizes[0] = chan->format.sizeimage + EMBEDDED_DATA_MAX_SIZE + EMBEDDED_DATA_BUFFER_ZONE_SIZE;
+ 
+ 	*nplanes = 1;
+ 	alloc_devs[0] = tegra_channel_get_vi_unit(chan);
+@@ -2113,6 +2115,23 @@
+ 	ret = v4l2_subdev_call(sd, pad, set_fmt, &cfg, &fmt);
+ 	if (ret == -ENOIOCTLCMD)
+ 		return -ENOTTY;
++
++	/* if set_fmt suggests a different pixel format, use that */
++	if (fmt.format.code != vfmt->code) {
++
++		vfmt = tegra_core_get_format_by_code(chan, fmt.format.code, 0);
++		pix->pixelformat = vfmt->fourcc;
++
++		/* Use the channel format if pixformat is not supported */
++		if (!vfmt) {
++			pix->pixelformat = chan->format.pixelformat;
++			vfmt = tegra_core_get_format_by_fourcc(chan, pix->pixelformat);
++		}
++
++		fmt.which = V4L2_SUBDEV_FORMAT_TRY;
++		fmt.pad = 0;
++		v4l2_fill_mbus_format(&fmt.format, pix, vfmt->code);
++	}
+ 
+ 	v4l2_fill_pix_format(pix, &fmt.format);
+ 
+@@ -2442,8 +2461,11 @@
+ 			continue;
+ 
+ 		ret = of_property_read_u32(port, "reg", &value);
+-		if (ret < 0)
++		/* TODO: Find other workaround */
++		if (ret < 0) {
++			ret = 0;
+ 			continue;
++		}
+ 
+ 		if (value != index)
+ 			continue;
+--- a/drivers/media/platform/tegra/camera/vi/vi5_fops.c
++++ b/drivers/media/platform/tegra/camera/vi/vi5_fops.c
+@@ -25,6 +25,7 @@
+ #include <media/tegra-v4l2-camera.h>
+ #include <media/tegra_camera_platform.h>
+ #include <soc/tegra/camrtc-capture.h>
++#include <media/vi.h>
+ #include <trace/events/camera_common.h>
+ 
+ #include "vi5_fops.h"
+@@ -383,7 +384,31 @@
+ 
+ 	return 0;
+ }
++
++/* XXX originally defined in kernel-4.9/drivers/media/v4l2-core/videobuf2-dma-contig.c
++   This struct is private, so it is redefined here to be able to access the virtual address of the buffer.
++*/
++struct vb2_dc_buf {
++    struct device            *dev;
++    void                *vaddr;
++    unsigned long            size;
++    void                *cookie;
++    dma_addr_t            dma_addr;
++    unsigned long            attrs;
++    enum dma_data_direction        dma_dir;
++    struct sg_table            *dma_sgt;
++    struct frame_vector        *vec;
++#if 0
++    /* MMAP related */
++    struct vb2_vmarea_handler    handler;
++    atomic_t            refcount;
++    struct sg_table            *sgt_base;
+ 
++    /* DMABUF related */
++    struct dma_buf_attachment    *db_attach;
++#endif
++};
++
+ static void vi5_setup_surface(struct tegra_channel *chan,
+ 	struct tegra_channel_buffer *buf, unsigned int descr_index, unsigned int vi_port)
+ {
+@@ -399,6 +424,11 @@
+ 		capture_data->requests_memoryinfo[descr_index];
+ 	struct capture_descriptor *desc = &chan->request[vi_port][descr_index];
+ 
++	dma_addr_t embedded_data_buf = buf->addr + chan->buffer_offset[vi_port] + chan->format.sizeimage + EMBEDDED_DATA_BUFFER_ZONE_SIZE; // add 8 bytes of space for storing info about embedded data
++	struct vb2_dc_buf* buf_priv = (struct vb2_dc_buf*)buf->buf.vb2_buf.planes[vi_port].mem_priv;
++	uint16_t * ptr_to_embedded_data = (uint16_t *)buf_priv->vaddr;
++	uint32_t end_of_image_offset_words = (chan->buffer_offset[vi_port] + chan->format.sizeimage) / 2;
++
+ 	if (chan->valid_ports > NVCSI_STREAM_1) {
+ 		height = chan->gang_height;
+ 		width = chan->gang_width;
+@@ -433,13 +463,17 @@
+ 		desc->ch_cfg.frame.embed_y = chan->embedded_data_height;
+ 
+ 		desc_memoryinfo->surface[VI_ATOMP_SURFACE_EMBEDDED].base_address
+-			= chan->emb_buf;
++			= embedded_data_buf;
+ 		desc_memoryinfo->surface[VI_ATOMP_SURFACE_EMBEDDED].size
+ 			= desc->ch_cfg.frame.embed_x * desc->ch_cfg.frame.embed_y;
+ 
+ 		desc->ch_cfg.atomp.surface_stride[VI_ATOMP_SURFACE_EMBEDDED]
+ 			= chan->embedded_data_width * BPP_MEM;
+ 	}
++
++	ptr_to_embedded_data[end_of_image_offset_words] = chan->embedded_data_width;
++	ptr_to_embedded_data[end_of_image_offset_words + 1] = chan->embedded_data_height;
++
+ 	//capture sequence should increment for each vi channel
+ 	if ((chan->valid_ports - vi_port) == 1)
+ 		chan->capture_descr_sequence += 1;
