@@ -2,8 +2,6 @@
   description = "FRAMOS Jetson camera sensor drivers for NixOS";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
     framos-src = {
       url = "github:framosimaging/framos-jetson-drivers/l4t-r36.4.4";
       flake = false;
