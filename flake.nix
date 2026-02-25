@@ -18,7 +18,7 @@
     in
     {
       nixosModules.default = import ./modules/default.nix {
-        inherit self framos-src framosPatches;
+        inherit framos-src framosPatches;
       };
       nixosModules.framos-jetson-drivers = self.nixosModules.default;
     };
