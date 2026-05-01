@@ -1,9 +1,11 @@
 # Override jetpack-nixos's devicetree package to include Framos camera
-# device tree overlay .dts files and the extended overlay Makefile.
+# device tree overlay .dts files and the fr_* dtbo-y Makefile targets.
 {
+  lib,
   runCommand,
   devicetree,
   framosSrc,
+  framosDevicetreePatches,
 }:
 
 devicetree.overrideAttrs (old: {
@@ -18,8 +20,9 @@ devicetree.overrideAttrs (old: {
       cp "$f" "$out/hardware/nvidia/t23x/nv-public/overlay/"
     done
 
-    # Append Framos fr_* targets to the upstream Makefile
-    grep 'fr_' ${framosSrc}/source/hardware/nvidia/t23x/nv-public/overlay/Makefile \
-      >> "$out/hardware/nvidia/t23x/nv-public/overlay/Makefile"
+    # Patch the upstream Makefile to add Framos dtbo-y targets
+    ${lib.concatMapStringsSep "\n"
+      (p: "patch -p1 -d $out < ${p}")
+      framosDevicetreePatches}
   '';
 })

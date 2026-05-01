@@ -1,4 +1,4 @@
-{ framos-src, framosPatches }:
+{ framos-src, framosPatches, framosDevicetreePatches }:
 
 { config, lib, pkgs, ... }:
 
@@ -125,7 +125,7 @@ in
                 nvidia-oot-modules = base.nvidia-oot-modules;
               };
               devicetree = kFinal.callPackage (import ../pkgs/framos-dtbos.nix) {
-                inherit framosSrc;
+                inherit framosSrc framosDevicetreePatches;
                 devicetree = base.devicetree;
               };
             };

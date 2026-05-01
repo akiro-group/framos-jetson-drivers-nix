@@ -15,10 +15,14 @@
         "0002-framos-camera-platform.patch"
         "0003-framos-i2c-makefile.patch"
       ];
+
+      framosDevicetreePatches = map (p: "${self}/patches/devicetree/${p}") [
+        "0001-framos-overlay-makefile-targets.patch"
+      ];
     in
     {
       nixosModules.default = import ./modules/default.nix {
-        inherit framos-src framosPatches;
+        inherit framos-src framosPatches framosDevicetreePatches;
       };
       nixosModules.framos-jetson-drivers = self.nixosModules.default;
     };
