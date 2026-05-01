@@ -155,7 +155,7 @@
  
 --- a/drivers/media/platform/tegra/camera/sensor_common.c
 +++ b/drivers/media/platform/tegra/camera/sensor_common.c
-@@ -54,6 +54,7 @@
+@@ -65,6 +65,7 @@ static int sensor_common_parse_signal_props(
  	u64 val64 = 0;
  	u64 rate;
  	int depth;
@@ -163,7 +163,7 @@
  
  	err = of_property_read_string(node, "phy_mode", &temp_str);
  	if (err) {
-@@ -92,29 +93,67 @@
+@@ -103,29 +104,66 @@ static int sensor_common_parse_signal_props(
  	}
  	signal->num_lanes = value;
  
@@ -171,10 +171,17 @@
 -	if (err) {
 -		dev_err(dev, "%s:pix_clk_hz property missing\n", __func__);
 -		return err;
+-	}
+-	signal->pixel_clock.val = val64;
+-
+-	err = read_property_u64(node, "serdes_pix_clk_hz", &val64);
 +	/* Check if Framos */
 +	sensor_node = of_get_parent(node);
 +	err = of_property_read_string(sensor_node, "compatible", &temp_str);
-+	if (err)
+ 	if (err)
+-		signal->serdes_pixel_clock.val = 0;
+-	else
+-		signal->serdes_pixel_clock.val = val64;
 +		return -ENODATA;
 +	if (!strncmp(temp_str, "framos", sizeof("framos")-1)) {
 +		/* Framos */
@@ -184,7 +191,7 @@
 +				err = of_remove_property(node, of_find_property(node, "serdes_pix_clk_hz", NULL));
 +				if (err) {
 +					dev_warn(dev, "%s:failed to remove serdes_pix_clk_hz\n", __func__);
-+				}	
++				}
 +			}
 +			err = read_property_u64(node, "pix_clk_hz", &val64);
 +			if (err) {
@@ -204,14 +211,7 @@
 +			signal->serdes_pixel_clock.val = val64;
 +			rate = signal->serdes_pixel_clock.val;
 +		}
- 	}
--	signal->pixel_clock.val = val64;
- 
--	err = read_property_u64(node, "serdes_pix_clk_hz", &val64);
--	if (err)
--		signal->serdes_pixel_clock.val = 0;
--	else
--		signal->serdes_pixel_clock.val = val64;
++	}
 +	else {
 +		/* Not Framos */
 +		err = read_property_u64(node, "pix_clk_hz", &val64);
@@ -250,36 +250,34 @@
  	}
  
  	err = read_property_u32(node, "csi_pixel_bit_depth", &depth);
-@@ -243,6 +282,12 @@
- 		*format = V4L2_PIX_FMT_SGBRG12;
- 	else if (strncmp(pixel_t, "bayer_grbg12", size) == 0)
- 		*format = V4L2_PIX_FMT_SGRBG12;
-+	else if (strncmp(pixel_t, "bayer_gbrg8", size) == 0)
+@@ -238,7 +276,13 @@ static int extract_pixel_format(
+ {
+ 	size_t size = strnlen(pixel_t, OF_MAX_STR_LEN);
+ 
+-	if (strncmp(pixel_t, "bayer_bggr10", size) == 0)
++	if (strncmp(pixel_t, "bayer_gbrg8", size) == 0)
 +		*format = V4L2_PIX_FMT_SGBRG8;
 +	else if (strncmp(pixel_t, "bayer_rggb8", size) == 0)
 +		*format = V4L2_PIX_FMT_SRGGB8;
 +	else if (strncmp(pixel_t, "bayer_grbg8", size) == 0)
 +		*format = V4L2_PIX_FMT_SGRBG8;
++	else if (strncmp(pixel_t, "bayer_bggr10", size) == 0)
+ 		*format = V4L2_PIX_FMT_SBGGR10;
+ 	else if (strncmp(pixel_t, "bayer_rggb10", size) == 0)
+ 		*format = V4L2_PIX_FMT_SRGGB10;
+@@ -264,6 +308,12 @@ static int extract_pixel_format(
+ 		*format = V4L2_PIX_FMT_SGRBG14;
  	else if (strncmp(pixel_t, "rgb_rgb88824", size) == 0)
  		*format = V4L2_PIX_FMT_RGB24;
- 	else if (strncmp(pixel_t, "bayer_wdr_pwl_rggb12", size) == 0)
-@@ -251,8 +296,16 @@
- 		*format = V4L2_PIX_FMT_SGBRG12;
- 	else if (strncmp(pixel_t, "bayer_wdr_pwl_grbg12", size) == 0)
- 		*format = V4L2_PIX_FMT_SGRBG12;
 +	else if (strncmp(pixel_t, "bayer_wdr_pwl_rggb10", size) == 0)
 +		*format = V4L2_PIX_FMT_SRGGB10;
 +	else if (strncmp(pixel_t, "bayer_wdr_pwl_gbrg10", size) == 0)
 +		*format = V4L2_PIX_FMT_SGBRG10;
 +	else if (strncmp(pixel_t, "bayer_wdr_pwl_grbg10", size) == 0)
 +		*format = V4L2_PIX_FMT_SGRBG10;
- 	else if (strncmp(pixel_t, "bayer_wdr_dol_rggb10", size) == 0)
- 		*format = V4L2_PIX_FMT_SRGGB10;
-+	else if (strncmp(pixel_t, "bayer_wdr_dol_rggb12", size) == 0)
-+		*format = V4L2_PIX_FMT_SRGGB12;
- #if 0 /* disable for Canonical kenrel */
- 	else if (strncmp(pixel_t, "bayer_xbggr10p", size) == 0)
- 		*format = V4L2_PIX_FMT_XBGGR10P;
+ 	else if (strncmp(pixel_t, "bayer_wdr_pwl_rggb12", size) == 0)
+ 		*format = V4L2_PIX_FMT_SRGGB12;
+ 	else if (strncmp(pixel_t, "bayer_wdr_pwl_gbrg12", size) == 0)
 --- a/drivers/media/platform/tegra/camera/tegracam_ctrls.c
 +++ b/drivers/media/platform/tegra/camera/tegracam_ctrls.c
 @@ -42,12 +42,64 @@
